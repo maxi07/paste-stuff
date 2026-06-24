@@ -1,2 +1,7 @@
 /.venv
 /__pycache__
+__pycache__/
+*.pyc
+
+# Generated at runtime by main.py (ensure_icon_file)
+/icon.ico

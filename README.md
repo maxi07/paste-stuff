@@ -1,12 +1,21 @@
 # Paste Stuff
 
-<img src="icon.png" alt="Paste Stuff icon" width="96" />
+<img src="docs/icon.png" alt="Paste Stuff icon" width="96" />
 
 A tiny Windows background app that pastes configured text snippets into **any**
 application — either via a global keyboard shortcut or from a right-click menu on
 its taskbar icon (a Windows Jump List, just like the Microsoft 365 app).
 
 There is **no window UI**. The app lives only as a taskbar icon.
+
+
+---
+
+## Demo
+
+![Demo](docs/demo.gif)
+
+> The animation above loops automatically. For a full-quality version, [download/open `demo.mp4`](docs/demo.mp4) directly.
 
 ---
 
@@ -183,7 +192,7 @@ console) when you log in.
 | `requirements.txt` | Python dependencies                                |
 | `run.bat`          | Starts the app in the background (no console)      |
 | `icon.ico`         | Generated taskbar/menu icon (recreated on startup) |
-| `icon.png`         | Icon image used in this README                     |
+| `docs/`            | README media (icon image, demo GIF and video)      |
 | `.venv/`           | Local virtual environment                          |
 
 ---
