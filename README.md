@@ -4,37 +4,38 @@
 
 A tiny Windows background app that pastes configured text snippets into **any**
 application — either via a global keyboard shortcut or from a right-click menu on
-its taskbar icon (a Windows Jump List, just like the Microsoft 365 app).
+its taskbar icon.
 
 There is **no window UI**. The app lives only as a taskbar icon.
 
-
----
 
 ## Demo
 
 ![Demo](docs/demo.gif)
 
-> The animation above loops automatically. For a full-quality version, [download/open `demo.mp4`](docs/demo.mp4) directly.
-
----
 
 ## Features
 
-- **Global keyboard shortcuts** — press e.g. `Ctrl+Shift+1` in any app to paste a
-  snippet.
-- **Taskbar menu (Jump List)** — right-click the taskbar icon to pick a snippet,
-  or to access app actions (Edit config / Reload config / Run at startup / Quit).
-- **JSON configuration** — define your shortcuts and snippet text in
-  `config.json`. No code changes needed.
-- **Smart pasting** — pastes directly into classic Windows edit fields
-  (`WM_PASTE`, no keystroke); everything else (browsers, Electron, Office, UWP)
-  gets a reliable focus restore + `Ctrl+V`.
-- **Run at startup** — optional auto-start with Windows.
-- **Console logging** — every action is logged when started from a console.
-- **Single instance** — a second launch detects the running app and exits.
+⌨️ **Global keyboard shortcuts** — press e.g. `Ctrl+Shift+1` in any app to paste a
+snippet.
 
----
+🖱️ **Taskbar menu (Jump List)** — right-click the taskbar icon to pick a snippet,
+or to access app actions (Edit config / Reload config / Run at startup / Quit).
+
+📝 **JSON configuration** — define your shortcuts and snippet text in
+`config.json`. No code changes needed.
+
+🎯 **Smart pasting** — pastes directly into classic Windows edit fields
+(`WM_PASTE`, no keystroke); everything else (browsers, Electron, Office, UWP)
+gets a reliable focus restore + `Ctrl+V`.
+
+🚀 **Run at startup** — optional auto-start with Windows.
+
+🪵 **Console logging** — every action is logged when started from a console.
+
+🔒 **Single instance** — a second launch detects the running app and exits.
+
+
 
 ## Requirements
 
@@ -49,7 +50,7 @@ pyperclip
 pywin32
 ```
 
----
+
 
 ## Setup
 
@@ -63,7 +64,6 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
----
 
 ## Running the app
 
@@ -88,12 +88,6 @@ Every action (startup, registered hotkeys, pastes, reloads, quit) is printed to
 this console. In background mode there is no console, so logs are simply not
 shown.
 
-### Quitting
-
-Right-click the taskbar icon → **Quit Paste Stuff** (or close the window via the
-taskbar). This unregisters the global hotkeys and exits.
-
----
 
 ## Configuration
 
