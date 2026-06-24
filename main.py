@@ -163,16 +163,19 @@ def load_config(notify=False):
         shortcuts = data.get("shortcuts", {})
         if not isinstance(shortcuts, dict):
             raise ValueError("'shortcuts' must be an object of hotkey -> text")
+        if len(shortcuts) == 0:
+            raise ValueError("the 'shortcuts' object must not be empty")
         _last_config_error = None
         return {str(k): str(v) for k, v in shortcuts.items()}
     except FileNotFoundError:
-        log.warning("config.json not found, starting with no shortcuts.")
+        log.warning("config.json not found.")
         if notify and _last_config_error != "missing":
             notify_warning(
                 f"config.json was not found at:\n{CONFIG_PATH}\n\n"
-                "Starting with no shortcuts. Create the file to add snippets.")
+                "Create the file with at least one shortcut, then start "
+                "Paste Stuff again.", block=True)
         _last_config_error = "missing"
-        return {}
+        sys.exit(1)
     except json.JSONDecodeError as exc:
         log.error("Could not parse config.json: %s", exc)
         signature = f"json:{exc.lineno}:{exc.colno}:{exc.msg}"
@@ -181,9 +184,9 @@ def load_config(notify=False):
                 "config.json is not valid JSON and could not be loaded:\n\n"
                 f"{exc.msg} (line {exc.lineno}, column {exc.colno}).\n\n"
                 "Fix the file (e.g. a missing comma, bracket or quote) and "
-                "reload the config. Your shortcuts are unavailable until then.")
+                "start Paste Stuff again.", block=True)
         _last_config_error = signature
-        return {}
+        sys.exit(2)
     except ValueError as exc:
         log.error("config.json is misconfigured: %s", exc)
         signature = f"value:{exc}"
@@ -192,19 +195,19 @@ def load_config(notify=False):
                 f"config.json is misconfigured:\n\n{exc}.\n\n"
                 "Expected a structure like:\n"
                 '{\n  "shortcuts": {\n    "ctrl+shift+1": "your text"\n  }\n}\n\n'
-                "Your shortcuts are unavailable until this is fixed.")
+                "Fix the file and start Paste Stuff again.", block=True)
         _last_config_error = signature
-        return {}
+        sys.exit(3)
     except OSError as exc:
         log.error("Could not read config.json: %s", exc)
         signature = f"os:{exc}"
         if notify and _last_config_error != signature:
             notify_error(
                 f"config.json could not be read:\n\n{exc}\n\n"
-                "Check the file's permissions. Your shortcuts are unavailable "
-                "until this is fixed.")
+                "Check the file's permissions, then start Paste Stuff again.",
+                block=True)
         _last_config_error = signature
-        return {}
+        sys.exit(4)
 
 
 def _preview(text, length=40):
