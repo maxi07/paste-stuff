@@ -33,16 +33,35 @@ import threading
 import time
 import tkinter as tk
 
-import keyboard
-import pyperclip
-import pythoncom
-import win32api
-import win32con
-import win32gui
-import win32process
-from PIL import Image, ImageDraw
-from win32com.propsys import propsys, pscon
-from win32com.shell import shell
+# Third-party dependencies (see requirements.txt). If any is missing the app
+# cannot run, so show a clear Windows alert and exit instead of crashing
+# silently -- important because the app normally runs without a console
+# (pythonw.exe), where an uncaught ImportError would leave no trace at all.
+try:
+    import keyboard
+    import pyperclip
+    import pythoncom
+    import win32api
+    import win32con
+    import win32gui
+    import win32process
+    from win32com.propsys import propsys, pscon
+    from win32com.shell import shell
+except ImportError as exc:
+    _msg = (
+        "Paste Stuff can't start because a required Python package is "
+        f"missing:\n\n    {exc}\n\n"
+        "Install the dependencies and try again:\n\n"
+        "    pip install -r requirements.txt"
+    )
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            0, _msg, "Paste Stuff \u2013 Missing dependency",
+            0x10 | 0x10000 | 0x40000)  # ICONERROR | SETFOREGROUND | TOPMOST
+    except Exception:
+        pass
+    print(_msg, file=sys.stderr)
+    sys.exit(1)
 
 APP_NAME = "Paste Stuff"
 APP_ID = "MaxKrause.PasteStuff"  # AppUserModelID that owns the taskbar button.
@@ -79,22 +98,112 @@ logging.basicConfig(
 log = logging.getLogger(APP_NAME)
 
 
+# --- User-facing alerts -----------------------------------------------------
+
+# This app usually runs without a console (pythonw.exe), so log messages are
+# invisible to the user. Windows MessageBox alerts are therefore how we surface
+# problems. The flags below configure the icon and bring the box to the front.
+_MB_OK = 0x00000000
+_MB_ICONERROR = 0x00000010
+_MB_ICONWARNING = 0x00000030
+_MB_ICONINFORMATION = 0x00000040
+_MB_SETFOREGROUND = 0x00010000
+_MB_TOPMOST = 0x00040000
+
+
+def _show_message_box(message, title, flags):
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            0, str(message), str(title),
+            flags | _MB_SETFOREGROUND | _MB_TOPMOST)
+    except Exception as exc:  # never let an alert failure crash the app.
+        log.error("Could not display alert '%s': %s", title, exc)
+
+
+def _notify(message, icon, title, block):
+    """Show a Windows alert. Runs off-thread unless ``block`` is set."""
+    if block:
+        _show_message_box(message, title, _MB_OK | icon)
+    else:
+        threading.Thread(
+            target=_show_message_box, args=(message, title, _MB_OK | icon),
+            daemon=True).start()
+
+
+def notify_error(message, title=None, block=False):
+    """Pop up an error alert (the message is expected to be logged already)."""
+    _notify(message, _MB_ICONERROR, title or f"{APP_NAME} \u2013 Error", block)
+
+
+def notify_warning(message, title=None, block=False):
+    """Pop up a warning alert (the message is expected to be logged already)."""
+    _notify(message, _MB_ICONWARNING, title or f"{APP_NAME} \u2013 Warning", block)
+
+
 # --- Config -----------------------------------------------------------------
 
-def load_config():
-    """Read config.json and return the {hotkey: text} mapping."""
+# Signature of the last config problem we alerted about, so repeated reloads of
+# a still-broken file don't spam the user with identical pop-ups.
+_last_config_error = None
+
+
+def load_config(notify=False):
+    """Read config.json and return the {hotkey: text} mapping.
+
+    A broken config never crashes the app: the problem is logged and (when
+    ``notify`` is set) shown in a Windows alert, and an empty mapping is
+    returned so the rest of the program keeps running.
+    """
+    global _last_config_error
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("the top-level value must be a JSON object")
         shortcuts = data.get("shortcuts", {})
         if not isinstance(shortcuts, dict):
             raise ValueError("'shortcuts' must be an object of hotkey -> text")
+        _last_config_error = None
         return {str(k): str(v) for k, v in shortcuts.items()}
     except FileNotFoundError:
         log.warning("config.json not found, starting with no shortcuts.")
+        if notify and _last_config_error != "missing":
+            notify_warning(
+                f"config.json was not found at:\n{CONFIG_PATH}\n\n"
+                "Starting with no shortcuts. Create the file to add snippets.")
+        _last_config_error = "missing"
         return {}
-    except (json.JSONDecodeError, ValueError) as exc:
+    except json.JSONDecodeError as exc:
+        log.error("Could not parse config.json: %s", exc)
+        signature = f"json:{exc.lineno}:{exc.colno}:{exc.msg}"
+        if notify and _last_config_error != signature:
+            notify_error(
+                "config.json is not valid JSON and could not be loaded:\n\n"
+                f"{exc.msg} (line {exc.lineno}, column {exc.colno}).\n\n"
+                "Fix the file (e.g. a missing comma, bracket or quote) and "
+                "reload the config. Your shortcuts are unavailable until then.")
+        _last_config_error = signature
+        return {}
+    except ValueError as exc:
+        log.error("config.json is misconfigured: %s", exc)
+        signature = f"value:{exc}"
+        if notify and _last_config_error != signature:
+            notify_error(
+                f"config.json is misconfigured:\n\n{exc}.\n\n"
+                "Expected a structure like:\n"
+                '{\n  "shortcuts": {\n    "ctrl+shift+1": "your text"\n  }\n}\n\n'
+                "Your shortcuts are unavailable until this is fixed.")
+        _last_config_error = signature
+        return {}
+    except OSError as exc:
         log.error("Could not read config.json: %s", exc)
+        signature = f"os:{exc}"
+        if notify and _last_config_error != signature:
+            notify_error(
+                f"config.json could not be read:\n\n{exc}\n\n"
+                "Check the file's permissions. Your shortcuts are unavailable "
+                "until this is fixed.")
+        _last_config_error = signature
         return {}
 
 
@@ -116,9 +225,16 @@ def _send_paste():
 def paste_text(text, hotkey=None):
     """Paste triggered by a global hotkey (target app is already focused)."""
     log.info("Hotkey '%s' triggered -> pasting: \"%s\"", hotkey, _preview(text))
-    pyperclip.copy(text)
-    _send_paste()
-    log.info("Paste sent for hotkey '%s'.", hotkey)
+    try:
+        pyperclip.copy(text)
+        _send_paste()
+        log.info("Paste sent for hotkey '%s'.", hotkey)
+    except Exception as exc:
+        log.error("Failed to paste snippet for hotkey '%s': %s", hotkey, exc)
+        notify_error(
+            f"Could not paste the snippet for hotkey '{hotkey}':\n\n{exc}\n\n"
+            "The clipboard or the target window may be unavailable. "
+            "Try again.")
 
 
 # Native control classes that handle WM_PASTE, so we can paste directly into
@@ -188,35 +304,44 @@ def paste_from_taskbar(text, label):
     focus restore plus Ctrl+V, which works universally.
     """
     log.info("Menu item '%s' selected -> pasting: \"%s\"", label, _preview(text))
-    pyperclip.copy(text)
-    hwnd = _last_active_hwnd
-    if not hwnd:
-        log.warning("No previous window remembered; pasting into current focus.")
-        _send_paste()
-        return
-
-    control = _focused_control(hwnd)
-    cls = ""
     try:
-        cls = win32gui.GetClassName(control)
-    except Exception:
-        pass
-
-    if cls.lower() in _EDIT_CLASSES:
-        try:
-            win32gui.PostMessage(control, win32con.WM_PASTE, 0, 0)
-            log.info("Pasted directly via WM_PASTE into '%s' (hwnd=%s).",
-                     cls, control)
+        pyperclip.copy(text)
+        hwnd = _last_active_hwnd
+        if not hwnd:
+            log.warning(
+                "No previous window remembered; pasting into current focus.")
+            _send_paste()
             return
-        except Exception as exc:
-            log.warning("Direct WM_PASTE failed (%s); using Ctrl+V.", exc)
 
-    _force_foreground(hwnd)
-    log.info("Restored focus to previous window (hwnd=%s); pasting via Ctrl+V.",
-             hwnd)
-    time.sleep(0.12)
-    _send_paste()
-    log.info("Paste sent for menu item '%s'.", label)
+        control = _focused_control(hwnd)
+        cls = ""
+        try:
+            cls = win32gui.GetClassName(control)
+        except Exception:
+            pass
+
+        if cls.lower() in _EDIT_CLASSES:
+            try:
+                win32gui.PostMessage(control, win32con.WM_PASTE, 0, 0)
+                log.info("Pasted directly via WM_PASTE into '%s' (hwnd=%s).",
+                         cls, control)
+                return
+            except Exception as exc:
+                log.warning("Direct WM_PASTE failed (%s); using Ctrl+V.", exc)
+
+        _force_foreground(hwnd)
+        log.info(
+            "Restored focus to previous window (hwnd=%s); pasting via Ctrl+V.",
+            hwnd)
+        time.sleep(0.12)
+        _send_paste()
+        log.info("Paste sent for menu item '%s'.", label)
+    except Exception as exc:
+        log.error("Failed to paste menu item '%s': %s", label, exc)
+        notify_error(
+            f"Could not paste '{label}':\n\n{exc}\n\n"
+            "The clipboard or the target window may be unavailable. "
+            "Try again.")
 
 
 def make_paste_callback(text, hotkey):
@@ -240,79 +365,41 @@ def clear_hotkeys():
             pass
 
 
-def register_hotkeys():
-    """Clear existing hotkeys and (re)register them from the current config."""
+def register_hotkeys(notify=False):
+    """Clear existing hotkeys and (re)register them from the current config.
+
+    Each shortcut is registered independently: one invalid entry is logged,
+    optionally reported to the user, and skipped, while every other (valid)
+    shortcut keeps working.
+    """
     clear_hotkeys()
-    shortcuts = load_config()
+    shortcuts = load_config(notify=notify)
     registered = 0
+    invalid = []
     for hotkey, text in shortcuts.items():
         try:
             handle = keyboard.add_hotkey(hotkey, make_paste_callback(text, hotkey))
             _hotkey_handles.append(handle)
             registered += 1
             log.info("Registered hotkey '%s'.", hotkey)
-        except ValueError as exc:
+        except Exception as exc:
             log.error("Invalid hotkey '%s': %s", hotkey, exc)
+            invalid.append((hotkey, str(exc)))
     log.info("Loaded %d shortcut(s).", registered)
+    if invalid and notify:
+        lines = "\n".join(f'  \u2022 "{hk}"  ({err})' for hk, err in invalid)
+        notify_warning(
+            f"{len(invalid)} shortcut(s) in config.json could not be "
+            f"registered and were skipped:\n\n{lines}\n\n"
+            f"The other {registered} shortcut(s) work normally. Fix the hotkey "
+            'syntax (e.g. "ctrl+shift+1") and reload the config.')
     return registered
 
 
 # --- Icon -------------------------------------------------------------------
 
-def create_icon_image(size=256):
-    """Draw a modern, rounded clipboard icon with a gradient background."""
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-
-    s = size / 256.0  # scale factor so we can design at 256 px
-
-    # Rounded gradient background (indigo -> blue).
-    bg = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    bg_d = ImageDraw.Draw(bg)
-    top, bottom = (76, 99, 230), (37, 165, 222)
-    for y in range(size):
-        t = y / max(1, size - 1)
-        r = int(top[0] + (bottom[0] - top[0]) * t)
-        g = int(top[1] + (bottom[1] - top[1]) * t)
-        b = int(top[2] + (bottom[2] - top[2]) * t)
-        bg_d.line([(0, y), (size, y)], fill=(r, g, b, 255))
-    mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        [0, 0, size - 1, size - 1], radius=int(56 * s), fill=255
-    )
-    img.paste(bg, (0, 0), mask)
-
-    # Clipboard board (white, rounded).
-    d.rounded_rectangle(
-        [int(64 * s), int(60 * s), int(192 * s), int(212 * s)],
-        radius=int(18 * s), fill=(255, 255, 255, 255),
-    )
-    # Clip at the top.
-    d.rounded_rectangle(
-        [int(104 * s), int(44 * s), int(152 * s), int(78 * s)],
-        radius=int(10 * s), fill=(70, 86, 120, 255),
-    )
-    # Text lines on the board.
-    line_color = (108, 124, 160, 255)
-    for i, y in enumerate((104, 132, 160, 188)):
-        x_end = 168 if i % 2 == 0 else 150
-        d.rounded_rectangle(
-            [int(84 * s), int((y - 5) * s), int(x_end * s), int((y + 5) * s)],
-            radius=int(5 * s), fill=line_color,
-        )
-    return img
-
-
-def ensure_icon_file():
-    """(Re)create icon.ico so the taskbar and menu show a crisp icon."""
-    try:
-        img = create_icon_image(256)
-        img.save(
-            ICON_PATH, format="ICO",
-            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)],
-        )
-    except Exception as exc:
-        log.warning("Could not write icon file: %s", exc)
+# icon.ico is a static asset shipped with the app; the taskbar button and the
+# Jump List entries point at it via ICON_PATH.
 
 
 # --- Run at Windows startup -------------------------------------------------
@@ -347,6 +434,10 @@ def set_autostart(enable):
         log.info("Run at startup %s.", "enabled" if enable else "disabled")
     except OSError as exc:
         log.error("Could not update autostart setting: %s", exc)
+        notify_error(
+            f"Could not {'enable' if enable else 'disable'} run at startup:\n\n"
+            f"{exc}\n\n"
+            "The Windows registry could not be updated.")
 
 
 # --- Taskbar Jump List ------------------------------------------------------
@@ -403,14 +494,15 @@ def build_jump_list(shortcuts):
         startup_label = ("Disable run at startup" if is_autostart_enabled()
                          else "Enable run at startup")
         col.AddObject(_task_link(startup_label, "--action autostart"))
-        col.AddObject(_separator_link())
-        col.AddObject(_task_link("Quit Paste Stuff", "--action quit"))
 
         cdl.AddUserTasks(col.QueryInterface(shell.IID_IObjectArray))
         cdl.CommitList()
         log.info("Taskbar menu updated with %d snippet(s).", len(shortcuts))
     except Exception as exc:
         log.error("Could not build taskbar menu: %s", exc)
+        notify_warning(
+            f"The taskbar right-click menu could not be built:\n\n{exc}\n\n"
+            "Keyboard shortcuts still work. Try reloading the config.")
 
 
 # --- Foreground window tracking ---------------------------------------------
@@ -437,7 +529,7 @@ def start_foreground_tracker():
 # --- Command channel (Jump List helper -> running app) ----------------------
 
 def reload_and_rebuild():
-    register_hotkeys()
+    register_hotkeys(notify=True)
     build_jump_list(load_config())
 
 
@@ -450,6 +542,10 @@ def handle_command(line):
         text = load_config().get(key)
         if text is None:
             log.warning("No snippet configured for '%s'.", key)
+            notify_warning(
+                f"No snippet is configured for '{key}'.\n\n"
+                "It may have been renamed or removed. Reload the config after "
+                "editing config.json.")
             return
         threading.Thread(
             target=paste_from_taskbar, args=(text, key), daemon=True).start()
@@ -508,17 +604,28 @@ def send_command(line, timeout=2):
 def run_action(action, key):
     """Executed by the short-lived process a Jump List entry launches."""
     if action == "edit":
-        os.startfile(CONFIG_PATH)
+        try:
+            os.startfile(CONFIG_PATH)
+        except OSError as exc:
+            log.error("Could not open config.json: %s", exc)
+            notify_error(
+                f"Could not open config.json at:\n{CONFIG_PATH}\n\n{exc}")
         return
     if action == "paste":
         if send_command(f"PASTE\t{key}"):
             return
         # Fallback: app not running -> best-effort local paste.
-        text = load_config().get(key)
+        text = load_config(notify=True).get(key)
         if text:
-            time.sleep(0.3)
-            pyperclip.copy(text)
-            _send_paste()
+            try:
+                time.sleep(0.3)
+                pyperclip.copy(text)
+                _send_paste()
+            except Exception as exc:
+                log.error("Fallback paste for '%s' failed: %s", key, exc)
+                notify_error(f"Could not paste the snippet for '{key}':\n\n{exc}")
+        else:
+            notify_warning(f"No snippet is configured for '{key}'.")
         return
     command = {"reload": "RELOAD", "autostart": "AUTOSTART", "quit": "QUIT"}.get(action)
     if command:
@@ -544,14 +651,13 @@ def run_resident():
         log.warning("Could not set AppUserModelID: %s", exc)
 
     pythoncom.CoInitialize()
-    ensure_icon_file()
 
     if not start_command_server():
         log.info("%s is already running. Exiting.", APP_NAME)
         return
 
     log.info("%s starting up.", APP_NAME)
-    register_hotkeys()
+    register_hotkeys(notify=True)
     start_foreground_tracker()
 
     # Minimal, invisible window: it exists only to give us a taskbar button
@@ -578,7 +684,37 @@ def run_resident():
     log.info("%s stopped.", APP_NAME)
 
 
+# --- Global error handling ---------------------------------------------------
+
+def _install_global_error_handlers():
+    """Make sure any unforeseen error is logged and shown, never a silent crash."""
+    def _hook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        log.error("Unhandled error", exc_info=(exc_type, exc_value, exc_tb))
+        notify_error(
+            f"{APP_NAME} hit an unexpected error and may not work correctly:\n\n"
+            f"{exc_type.__name__}: {exc_value}",
+            block=True)
+
+    sys.excepthook = _hook
+
+    def _thread_hook(args):
+        if issubclass(args.exc_type, KeyboardInterrupt):
+            return
+        name = args.thread.name if args.thread else "?"
+        log.error("Unhandled error in thread %s", name,
+                  exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        notify_error(
+            f"{APP_NAME} hit an unexpected error in a background task:\n\n"
+            f"{args.exc_type.__name__}: {args.exc_value}")
+
+    threading.excepthook = _thread_hook
+
+
 def main():
+    _install_global_error_handlers()
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--action", choices=[
         "paste", "reload", "autostart", "edit", "quit"])

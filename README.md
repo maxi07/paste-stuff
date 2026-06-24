@@ -47,7 +47,6 @@ Python dependencies (installed into the local `.venv`):
 keyboard
 pyperclip
 pywin32
-Pillow
 ```
 
 ---
@@ -191,7 +190,7 @@ console) when you log in.
 | `config.json`      | Your shortcuts and snippet text                    |
 | `requirements.txt` | Python dependencies                                |
 | `run.bat`          | Starts the app in the background (no console)      |
-| `icon.ico`         | Generated taskbar/menu icon (recreated on startup) |
+| `icon.ico`         | Taskbar/menu icon                                  |
 | `docs/`            | README media (icon image, demo GIF and video)      |
 | `.venv/`           | Local virtual environment                          |
 
