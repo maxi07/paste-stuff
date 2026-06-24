@@ -37,56 +37,33 @@ gets a reliable focus restore + `Ctrl+V`.
 
 
 
-## Requirements
+## Download & install
 
-- Windows 10/11
-- Python 3.x (the project was set up with Python 3.14 via the `py` launcher)
+Grab the latest **`PasteStuff.zip`** from the
+[**Releases** page](https://github.com/maxi07/paste-stuff/releases/latest),
+extract the whole folder anywhere, and run **`PasteStuff.exe`** from inside it.
+There's no installer and no need to have Python installed.
 
-Python dependencies (installed into the local `.venv`):
+> [!NOTE]
+> **The first launch can take up to ~10 seconds** while Windows unpacks the app.
+> The app has no window — look for its icon in the taskbar / system tray.
 
-```
-keyboard
-pyperclip
-pywin32
-```
-
-
-
-## Setup
-
-From the project folder (`paste stuff`):
-
-```powershell
-# 1. Create the virtual environment
-py -3 -m venv .venv
-
-# 2. Install dependencies
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+Keep all extracted files together in the same folder; `PasteStuff.exe` needs the
+bundled files next to it to run.
 
 
-## Running the app
+## Editing snippets from the taskbar icon
 
-### In the background (recommended)
+You don't need to edit any files by hand. **Right-click the Paste Stuff taskbar
+icon** to:
 
-Double-click **`run.bat`**, or run:
+- **Paste a snippet** — pick any configured snippet straight from the menu.
+- **Edit config** — opens `config.json` in your default editor.
+- **Reload config** — applies your changes immediately (no restart needed).
+- **Run at startup** — toggle auto-start with Windows.
 
-```powershell
-.\.venv\Scripts\pythonw.exe main.py
-```
-
-`pythonw.exe` runs without a console window. The app appears as an icon in the
-taskbar.
-
-### With a console (to see logs)
-
-```powershell
-.\.venv\Scripts\python.exe main.py
-```
-
-Every action (startup, registered hotkeys, pastes, reloads, quit) is printed to
-this console. In background mode there is no console, so logs are simply not
-shown.
+After editing the config, choose **Reload config** so your new shortcuts take
+effect right away. See [Configuration](#configuration) below for the file format.
 
 
 ## Configuration
@@ -113,7 +90,61 @@ pasted:
 After editing, choose **Reload config** from the taskbar menu (no restart
 needed). You can also open the file via **Edit config** in the same menu.
 
----
+## For developers
+
+Want to modify the app or run it from source instead of the packaged `.exe`?
+
+### Requirements
+
+- Windows 10/11
+- Python 3.x (the project was set up with Python 3.14 via the `py` launcher)
+
+Python dependencies (installed into the local `.venv`):
+
+```
+keyboard
+pyperclip
+pywin32
+```
+
+### Setup
+
+From the project folder (`paste stuff`):
+
+```powershell
+# 1. Create the virtual environment
+py -3 -m venv .venv
+
+# 2. Install dependencies
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### Running from source
+
+**In the background (recommended).** Double-click **`run.bat`**, or run:
+
+```powershell
+.\.venv\Scripts\pythonw.exe main.py
+```
+
+`pythonw.exe` runs without a console window. The app appears as an icon in the
+taskbar.
+
+**With a console (to see logs):**
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+Every action (startup, registered hotkeys, pastes, reloads, quit) is printed to
+this console. In background mode there is no console, so logs are simply not
+shown.
+
+### Building the executable
+
+Releases are built automatically by GitHub Actions
+([`.github/workflows/release.yml`](.github/workflows/release.yml)) using
+PyInstaller in `--onedir` mode and published as `PasteStuff.zip`.
 
 ## How it works
 
@@ -174,7 +205,6 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
 pointing at `pythonw.exe main.py`, so the app starts automatically (without a
 console) when you log in.
 
----
 
 ## Files
 
@@ -188,7 +218,6 @@ console) when you log in.
 | `docs/`            | README media (icon image, demo GIF and video)      |
 | `.venv/`           | Local virtual environment                          |
 
----
 
 ## Troubleshooting
 
