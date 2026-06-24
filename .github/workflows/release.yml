@@ -1,0 +1,47 @@
+name: Build release executable
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build single-file executable
+        # --onefile  : one self-contained .exe (no Python install needed)
+        # --noconsole: run windowless, like pythonw.exe / run.bat
+        # --add-data : bundle config.json + icon.ico so first run seeds them
+        run: >
+          pyinstaller
+          --onefile
+          --noconsole
+          --name "PasteStuff"
+          --icon icon.ico
+          --add-data "config.json;."
+          --add-data "icon.ico;."
+          main.py
+
+      - name: Upload executable to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/PasteStuff.exe

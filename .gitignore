@@ -2,3 +2,11 @@
 /__pycache__
 __pycache__/
 *.pyc
+
+# PyInstaller build output
+/build
+/dist
+*.spec
+
+# pytest
+.pytest_cache/

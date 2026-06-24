@@ -65,13 +65,50 @@ except ImportError as exc:
 
 APP_NAME = "Paste Stuff"
 APP_ID = "MaxKrause.PasteStuff"  # AppUserModelID that owns the taskbar button.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Upper bound on how many snippets we load from config.json. Windows Jump
+# Lists can only show a limited number of entries (the exact figure is reported
+# by ICustomDestinationList::BeginList and respected in build_jump_list), and
+# every snippet also claims a global hotkey, so an unbounded config would slow
+# startup and silently overflow the menu. Anything beyond this is ignored with
+# a warning rather than failing the whole config.
+MAX_SHORTCUTS = 10
+
+# The app can run either as a plain script (python main.py) or as a single-file
+# .exe built with PyInstaller (the GitHub release artifact). In the frozen exe
+# ``__file__`` lives in a throwaway temp folder, so user-editable files
+# (config.json, icon.ico) must live next to the .exe instead, and the app must
+# relaunch itself as the .exe rather than "pythonw.exe main.py".
+IS_FROZEN = getattr(sys, "frozen", False)
+if IS_FROZEN:
+    EXE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    BUNDLE_DIR = getattr(sys, "_MEIPASS", EXE_DIR)  # read-only bundled assets.
+    BASE_DIR = EXE_DIR
+else:
+    EXE_DIR = BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BUNDLE_DIR = BASE_DIR
+
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 ICON_PATH = os.path.join(BASE_DIR, "icon.ico")
 SCRIPT = os.path.join(BASE_DIR, "main.py")
 
-_PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-LAUNCHER_EXE = _PYTHONW if os.path.exists(_PYTHONW) else sys.executable
+if IS_FROZEN:
+    LAUNCHER_EXE = sys.executable
+else:
+    _PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    LAUNCHER_EXE = _PYTHONW if os.path.exists(_PYTHONW) else sys.executable
+
+
+def _relaunch_args(extra_args):
+    """Arguments for re-launching this app (Jump List entries / autostart).
+
+    Frozen: the .exe itself is the entry point, so we pass only ``extra_args``.
+    Script: we must run ``"main.py" <extra_args>`` through the Python launcher.
+    """
+    extra_args = extra_args.strip()
+    if IS_FROZEN:
+        return extra_args
+    return f'"{SCRIPT}" {extra_args}'.strip()
 
 # Local loopback channel the Jump List helpers use to talk to the running app.
 HOST = "127.0.0.1"
@@ -165,8 +202,24 @@ def load_config(notify=False):
             raise ValueError("'shortcuts' must be an object of hotkey -> text")
         if len(shortcuts) == 0:
             raise ValueError("the 'shortcuts' object must not be empty")
-        _last_config_error = None
-        return {str(k): str(v) for k, v in shortcuts.items()}
+        items = {str(k): str(v) for k, v in shortcuts.items()}
+        if len(items) > MAX_SHORTCUTS:
+            dropped = len(items) - MAX_SHORTCUTS
+            log.warning(
+                "config.json defines %d shortcuts; only the first %d are "
+                "used (%d ignored).", len(items), MAX_SHORTCUTS, dropped)
+            signature = f"too_many:{len(items)}"
+            if notify and _last_config_error != signature:
+                notify_warning(
+                    f"config.json defines {len(items)} shortcuts, but Paste "
+                    f"Stuff only uses the first {MAX_SHORTCUTS}. The remaining "
+                    f"{dropped} were ignored.\n\nRemove some shortcuts to stay "
+                    "within the limit.")
+            _last_config_error = signature
+            items = dict(list(items.items())[:MAX_SHORTCUTS])
+        else:
+            _last_config_error = None
+        return items
     except FileNotFoundError:
         log.warning("config.json not found.")
         if notify and _last_config_error != "missing":
@@ -358,6 +411,38 @@ def make_paste_callback(text, hotkey):
 
 # --- Hotkeys ----------------------------------------------------------------
 
+# Spelling variants that ``keyboard`` accepts, mapped to a single canonical
+# form so reserved-hotkey detection works regardless of how the user wrote it.
+_HOTKEY_ALIASES = {
+    "win": "windows", "control": "ctrl", "esc": "escape", "del": "delete",
+}
+
+
+def _normalize_hotkey(hotkey):
+    """Canonicalise a hotkey string for comparison (sorted, lower-case parts)."""
+    parts = []
+    for raw in hotkey.split("+"):
+        part = raw.strip().lower()
+        if part:
+            parts.append(_HOTKEY_ALIASES.get(part, part))
+    return "+".join(sorted(parts))
+
+
+# Hotkeys Windows reserves for itself. Some (Ctrl+Alt+Del, Win+L) are handled
+# by the OS below the level we can hook, so they never reach us; others are so
+# fundamental that hijacking them would break normal usage. Configured
+# shortcuts matching any of these are skipped with a warning.
+_RESERVED_HOTKEYS = {
+    _normalize_hotkey(h) for h in (
+        "ctrl+alt+delete",
+        "ctrl+shift+escape",
+        "ctrl+escape",
+        "alt+tab", "alt+escape", "alt+f4",
+        "win+l", "win+d", "win+tab", "win+r", "win+e",
+    )
+}
+
+
 def clear_hotkeys():
     """Remove every hotkey we previously registered."""
     while _hotkey_handles:
@@ -379,7 +464,12 @@ def register_hotkeys(notify=False):
     shortcuts = load_config(notify=notify)
     registered = 0
     invalid = []
+    reserved = []
     for hotkey, text in shortcuts.items():
+        if _normalize_hotkey(hotkey) in _RESERVED_HOTKEYS:
+            log.warning("Hotkey '%s' is reserved by Windows; skipping.", hotkey)
+            reserved.append(hotkey)
+            continue
         try:
             handle = keyboard.add_hotkey(hotkey, make_paste_callback(text, hotkey))
             _hotkey_handles.append(handle)
@@ -389,13 +479,23 @@ def register_hotkeys(notify=False):
             log.error("Invalid hotkey '%s': %s", hotkey, exc)
             invalid.append((hotkey, str(exc)))
     log.info("Loaded %d shortcut(s).", registered)
-    if invalid and notify:
-        lines = "\n".join(f'  \u2022 "{hk}"  ({err})' for hk, err in invalid)
+    if notify and (invalid or reserved):
+        sections = []
+        if reserved:
+            rlines = "\n".join(f'  \u2022 "{hk}"' for hk in reserved)
+            sections.append(
+                f"{len(reserved)} shortcut(s) are reserved by Windows and "
+                f"cannot be reused, so they were skipped:\n\n{rlines}")
+        if invalid:
+            ilines = "\n".join(f'  \u2022 "{hk}"  ({err})' for hk, err in invalid)
+            sections.append(
+                f"{len(invalid)} shortcut(s) could not be registered and were "
+                f"skipped:\n\n{ilines}")
         notify_warning(
-            f"{len(invalid)} shortcut(s) in config.json could not be "
-            f"registered and were skipped:\n\n{lines}\n\n"
-            f"The other {registered} shortcut(s) work normally. Fix the hotkey "
-            'syntax (e.g. "ctrl+shift+1") and reload the config.')
+            "\n\n".join(sections)
+            + f"\n\nThe other {registered} shortcut(s) work normally. Pick "
+            'different key combinations (e.g. "ctrl+shift+1") and reload the '
+            "config.")
     return registered
 
 
@@ -408,6 +508,8 @@ def register_hotkeys(notify=False):
 # --- Run at Windows startup -------------------------------------------------
 
 def _startup_command():
+    if IS_FROZEN:
+        return f'"{LAUNCHER_EXE}"'
     return f'"{LAUNCHER_EXE}" "{SCRIPT}"'
 
 
@@ -451,7 +553,7 @@ def _task_link(title, extra_args):
         shell.CLSID_ShellLink, None,
         pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
     link.SetPath(LAUNCHER_EXE)
-    link.SetArguments(f'"{SCRIPT}" {extra_args}')
+    link.SetArguments(_relaunch_args(extra_args))
     link.SetWorkingDirectory(BASE_DIR)
     link.SetIconLocation(ICON_PATH, 0)
     link.SetDescription(title[:250])
@@ -480,16 +582,23 @@ def build_jump_list(shortcuts):
             shell.CLSID_DestinationList, None,
             pythoncom.CLSCTX_INPROC_SERVER, shell.IID_ICustomDestinationList)
         cdl.SetAppID(APP_ID)
-        cdl.BeginList()
+        max_slots, _ = cdl.BeginList()
 
         col = pythoncom.CoCreateInstance(
             shell.CLSID_EnumerableObjectCollection, None,
             pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IObjectCollection)
 
-        for hotkey, text in shortcuts.items():
+        # Always keep room for the fixed app actions (separator + Edit / Reload
+        # / autostart) so a long snippet list can never push them out of the
+        # Jump List, which only has ``max_slots`` slots in total.
+        action_slots = 4
+        room_for_snippets = max(0, max_slots - action_slots)
+        visible = list(shortcuts.items())[:room_for_snippets]
+
+        for hotkey, text in visible:
             title = f"{hotkey}    {_preview(text, 28)}"
             col.AddObject(_task_link(title, f'--action paste --key "{hotkey}"'))
-        if shortcuts:
+        if visible:
             col.AddObject(_separator_link())
 
         col.AddObject(_task_link("Edit config", "--action edit"))
@@ -500,7 +609,13 @@ def build_jump_list(shortcuts):
 
         cdl.AddUserTasks(col.QueryInterface(shell.IID_IObjectArray))
         cdl.CommitList()
-        log.info("Taskbar menu updated with %d snippet(s).", len(shortcuts))
+        if len(visible) < len(shortcuts):
+            log.warning(
+                "Taskbar menu shows %d of %d snippet(s); the rest don't fit "
+                "in the Jump List (the hotkeys still work).",
+                len(visible), len(shortcuts))
+        else:
+            log.info("Taskbar menu updated with %d snippet(s).", len(shortcuts))
     except Exception as exc:
         log.error("Could not build taskbar menu: %s", exc)
         notify_warning(
@@ -716,8 +831,35 @@ def _install_global_error_handlers():
     threading.excepthook = _thread_hook
 
 
+def _ensure_user_files():
+    """For the frozen .exe, seed editable assets next to it on first run.
+
+    A single-file PyInstaller .exe unpacks its bundled copies of config.json
+    and icon.ico into a temporary folder that is deleted on exit, so they can't
+    be edited or referenced persistently (e.g. by the Jump List). On first run
+    we copy them next to the .exe -- where ``CONFIG_PATH``/``ICON_PATH`` point --
+    giving the user a working, editable config.json out of the box.
+    """
+    if not IS_FROZEN:
+        return
+    import shutil
+    for name in ("config.json", "icon.ico"):
+        dest = os.path.join(EXE_DIR, name)
+        if os.path.exists(dest):
+            continue
+        src = os.path.join(BUNDLE_DIR, name)
+        if not os.path.exists(src):
+            continue
+        try:
+            shutil.copyfile(src, dest)
+            log.info("Created %s next to the app.", name)
+        except OSError as exc:
+            log.warning("Could not create %s next to the app: %s", name, exc)
+
+
 def main():
     _install_global_error_handlers()
+    _ensure_user_files()
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--action", choices=[
         "paste", "reload", "autostart", "edit", "quit"])

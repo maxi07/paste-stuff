@@ -115,6 +115,70 @@ def test_shipped_config_is_valid():
                for k, v in shortcuts.items())
 
 
+def test_load_config_at_limit_keeps_all(tmp_path, monkeypatch):
+    shortcuts = {f"ctrl+shift+{i}": f"text {i}"
+                 for i in range(main.MAX_SHORTCUTS)}
+    path = _write_config(tmp_path, json.dumps({"shortcuts": shortcuts}))
+    monkeypatch.setattr(main, "CONFIG_PATH", path)
+    assert main.load_config() == shortcuts
+
+
+def test_load_config_truncates_above_limit(tmp_path, monkeypatch):
+    shortcuts = {f"key{i:02d}": f"text {i}"
+                 for i in range(main.MAX_SHORTCUTS + 5)}
+    path = _write_config(tmp_path, json.dumps({"shortcuts": shortcuts}))
+    monkeypatch.setattr(main, "CONFIG_PATH", path)
+    result = main.load_config()
+    assert len(result) == main.MAX_SHORTCUTS
+
+
+def test_load_config_truncation_keeps_first_in_order(tmp_path, monkeypatch):
+    shortcuts = {f"key{i:02d}": f"text {i}"
+                 for i in range(main.MAX_SHORTCUTS + 3)}
+    path = _write_config(tmp_path, json.dumps({"shortcuts": shortcuts}))
+    monkeypatch.setattr(main, "CONFIG_PATH", path)
+    result = main.load_config()
+    expected = dict(list(shortcuts.items())[:main.MAX_SHORTCUTS])
+    assert result == expected
+
+
+# --- _normalize_hotkey ------------------------------------------------------
+
+def test_normalize_hotkey_lowercases_and_sorts():
+    assert main._normalize_hotkey("Shift+Ctrl") == "ctrl+shift"
+
+
+def test_normalize_hotkey_is_order_independent():
+    assert (main._normalize_hotkey("ctrl+alt+delete")
+            == main._normalize_hotkey("delete+ctrl+alt"))
+
+
+def test_normalize_hotkey_applies_aliases():
+    assert main._normalize_hotkey("win+l") == main._normalize_hotkey("windows+l")
+    assert main._normalize_hotkey("control+esc") == "ctrl+escape"
+
+
+def test_normalize_hotkey_strips_whitespace_and_blanks():
+    assert main._normalize_hotkey(" ctrl +  shift ") == "ctrl+shift"
+
+
+# --- reserved hotkeys -------------------------------------------------------
+
+def test_reserved_hotkeys_contains_known_combos():
+    assert main._normalize_hotkey("ctrl+alt+delete") in main._RESERVED_HOTKEYS
+    assert main._normalize_hotkey("alt+f4") in main._RESERVED_HOTKEYS
+    assert main._normalize_hotkey("win+l") in main._RESERVED_HOTKEYS
+
+
+def test_reserved_hotkey_matches_regardless_of_spelling():
+    # Win+L written as "windows+l" with reordered parts must still match.
+    assert main._normalize_hotkey("l+windows") in main._RESERVED_HOTKEYS
+
+
+def test_ordinary_hotkey_is_not_reserved():
+    assert main._normalize_hotkey("ctrl+shift+1") not in main._RESERVED_HOTKEYS
+
+
 # --- command channel --------------------------------------------------------
 
 def test_handle_command_unknown_does_not_raise():
