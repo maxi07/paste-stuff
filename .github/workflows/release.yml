@@ -27,13 +27,15 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build single-file executable
-        # --onefile  : one self-contained .exe (no Python install needed)
+      - name: Build one-folder executable
+        # --onedir   : DLLs live next to the .exe (no per-launch temp extraction).
+        #              Avoids Smart App Control / WDAC blocking the bundled
+        #              python3xx.dll / ucrtbase.dll (error 0xc0e90002).
         # --noconsole: run windowless, like pythonw.exe / run.bat
         # --add-data : bundle config.json + icon.ico so first run seeds them
         run: >
           pyinstaller
-          --onefile
+          --onedir
           --noconsole
           --name "PasteStuff"
           --icon icon.ico
@@ -41,7 +43,11 @@ jobs:
           --add-data "icon.ico;."
           main.py
 
+      - name: Package the application folder into a zip
+        run: Compress-Archive -Path dist/PasteStuff/* -DestinationPath dist/PasteStuff.zip
+        shell: pwsh
+
       - name: Upload executable to the release
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/PasteStuff.exe
+          files: dist/PasteStuff.zip
