@@ -1,0 +1,7 @@
+{
+  "shortcuts": {
+    "ctrl+shift+1": "Hello from my paste tool!",
+    "ctrl+shift+2": "Best regards,\nMax",
+    "ctrl+shift+3": "my.email@example.com"
+  }
+}

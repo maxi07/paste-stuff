@@ -1,0 +1,4 @@
+keyboard>=0.13.5
+pyperclip>=1.9.0
+pywin32>=306
+Pillow>=11.3.0
