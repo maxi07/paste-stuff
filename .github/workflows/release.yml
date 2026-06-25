@@ -32,7 +32,7 @@ jobs:
         #              Avoids Smart App Control / WDAC blocking the bundled
         #              python3xx.dll / ucrtbase.dll (error 0xc0e90002).
         # --noconsole: run windowless, like pythonw.exe / run.bat
-        # --add-data : bundle config.json + icon.ico so first run seeds them
+        # --add-data : bundle config.json + icons so first run seeds them
         run: >
           pyinstaller
           --onedir
@@ -41,6 +41,9 @@ jobs:
           --icon icon.ico
           --add-data "config.json;."
           --add-data "icon.ico;."
+          --add-data "icon-edit.ico;."
+          --add-data "icon-reload.ico;."
+          --add-data "icon-startup.ico;."
           main.py
 
       - name: Package the application folder into a zip

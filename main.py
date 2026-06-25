@@ -92,6 +92,15 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 ICON_PATH = os.path.join(BASE_DIR, "icon.ico")
 SCRIPT = os.path.join(BASE_DIR, "main.py")
 
+# Thin, monochrome Windows 11 line icons for the fixed Jump List actions, so
+# they match the shell's own menu entries (Pin to taskbar, Close window) rather
+# than repeating the app's own icon. They are generated from the Segoe Fluent
+# Icons font by generate_action_icons.py. Each value is an (icon-file, index)
+# pair for SetIconLocation.
+ICON_EDIT = (os.path.join(BASE_DIR, "icon-edit.ico"), 0)
+ICON_RELOAD = (os.path.join(BASE_DIR, "icon-reload.ico"), 0)
+ICON_STARTUP = (os.path.join(BASE_DIR, "icon-startup.ico"), 0)
+
 if IS_FROZEN:
     LAUNCHER_EXE = sys.executable
 else:
@@ -547,15 +556,22 @@ def set_autostart(enable):
 
 # --- Taskbar Jump List ------------------------------------------------------
 
-def _task_link(title, extra_args):
-    """Create a Jump List task that re-launches this script with given args."""
+def _task_link(title, extra_args, icon=None):
+    """Create a Jump List task that re-launches this script with given args.
+
+    ``icon`` is an optional (icon-file, index) pair; it defaults to the app's
+    own icon, but the fixed actions pass a stock Windows icon instead.
+    """
     link = pythoncom.CoCreateInstance(
         shell.CLSID_ShellLink, None,
         pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
     link.SetPath(LAUNCHER_EXE)
     link.SetArguments(_relaunch_args(extra_args))
     link.SetWorkingDirectory(BASE_DIR)
-    link.SetIconLocation(ICON_PATH, 0)
+    icon_path, icon_index = icon if icon else (ICON_PATH, 0)
+    if not os.path.exists(icon_path):  # fall back to the app icon if missing.
+        icon_path, icon_index = ICON_PATH, 0
+    link.SetIconLocation(icon_path, icon_index)
     link.SetDescription(title[:250])
     store = link.QueryInterface(propsys.IID_IPropertyStore)
     store.SetValue(pscon.PKEY_Title,
@@ -601,11 +617,11 @@ def build_jump_list(shortcuts):
         if visible:
             col.AddObject(_separator_link())
 
-        col.AddObject(_task_link("Edit config", "--action edit"))
-        col.AddObject(_task_link("Reload config", "--action reload"))
+        col.AddObject(_task_link("Edit config", "--action edit", ICON_EDIT))
+        col.AddObject(_task_link("Reload config", "--action reload", ICON_RELOAD))
         startup_label = ("Disable run at startup" if is_autostart_enabled()
                          else "Enable run at startup")
-        col.AddObject(_task_link(startup_label, "--action autostart"))
+        col.AddObject(_task_link(startup_label, "--action autostart", ICON_STARTUP))
 
         cdl.AddUserTasks(col.QueryInterface(shell.IID_IObjectArray))
         cdl.CommitList()
@@ -832,18 +848,20 @@ def _install_global_error_handlers():
 
 
 def _ensure_user_files():
-    """For the frozen .exe, seed editable assets next to it on first run.
+    """For the frozen .exe, seed bundled assets next to it on first run.
 
-    A single-file PyInstaller .exe unpacks its bundled copies of config.json
-    and icon.ico into a temporary folder that is deleted on exit, so they can't
-    be edited or referenced persistently (e.g. by the Jump List). On first run
-    we copy them next to the .exe -- where ``CONFIG_PATH``/``ICON_PATH`` point --
-    giving the user a working, editable config.json out of the box.
+    A single-file PyInstaller .exe unpacks its bundled assets into a temporary
+    folder that is deleted on exit, so they can't be edited or referenced
+    persistently (e.g. by the Jump List, whose icons point at fixed paths). On
+    first run we copy them next to the .exe -- where ``CONFIG_PATH``,
+    ``ICON_PATH`` and the action-icon paths point -- giving the user a working,
+    editable config.json and the menu icons out of the box.
     """
     if not IS_FROZEN:
         return
     import shutil
-    for name in ("config.json", "icon.ico"):
+    for name in ("config.json", "icon.ico", "icon-edit.ico",
+                 "icon-reload.ico", "icon-startup.ico"):
         dest = os.path.join(EXE_DIR, name)
         if os.path.exists(dest):
             continue
