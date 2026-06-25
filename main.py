@@ -96,9 +96,8 @@ SCRIPT = os.path.join(BASE_DIR, "main.py")
 
 # Thin, monochrome Windows 11 line icons for the fixed Jump List actions, so
 # they match the shell's own menu entries (Pin to taskbar, Close window) rather
-# than repeating the app's own icon. They are generated from the Segoe Fluent
-# Icons font by generate_action_icons.py. Each value is an (icon-file, index)
-# pair for SetIconLocation.
+# than repeating the app's own icon. Each value is an (icon-file, index) pair
+# for SetIconLocation.
 ICON_EDIT = (os.path.join(BASE_DIR, "icon-edit.ico"), 0)
 ICON_RELOAD = (os.path.join(BASE_DIR, "icon-reload.ico"), 0)
 ICON_STARTUP = (os.path.join(BASE_DIR, "icon-startup.ico"), 0)
