@@ -1,3 +1,2 @@
 -r requirements.txt
 pytest>=8.0
-Pillow>=10.0  # only for generate_action_icons.py (not needed at runtime)
