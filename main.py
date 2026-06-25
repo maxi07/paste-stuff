@@ -45,8 +45,8 @@ try:
     import win32con
     import win32gui
     import win32process
-    from win32com.propsys import propsys, pscon
-    from win32com.shell import shell
+    from win32com.propsys import propsys, pscon # type: ignore[reportMissingModuleSource]
+    from win32com.shell import shell # type: ignore[reportMissingModuleSource]
 except ImportError as exc:
     _msg = (
         "Paste Stuff can't start because a required Python package is "

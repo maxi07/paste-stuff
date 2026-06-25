@@ -30,7 +30,8 @@ jobs:
       - name: Write version file
         # Bake the release tag into the build so the app's Jump List footer
         # can show it (main.py reads version.txt).
-        run: "${{ github.ref_name }}" | Out-File -FilePath version.txt -Encoding utf8 -NoNewline
+        run: |
+          "${{ github.ref_name }}" | Out-File -FilePath version.txt -Encoding utf8 -NoNewline
         shell: pwsh
 
       - name: Build one-folder executable
