@@ -27,12 +27,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Write version file
+        # Bake the release tag into the build so the app's Jump List footer
+        # can show it (main.py reads version.txt).
+        run: |
+          "${{ github.ref_name }}" | Out-File -FilePath version.txt -Encoding utf8 -NoNewline
+        shell: pwsh
+
       - name: Build one-folder executable
         # --onedir   : DLLs live next to the .exe (no per-launch temp extraction).
         #              Avoids Smart App Control / WDAC blocking the bundled
         #              python3xx.dll / ucrtbase.dll (error 0xc0e90002).
         # --noconsole: run windowless, like pythonw.exe / run.bat
-        # --add-data : bundle config.json + icon.ico so first run seeds them
+        # --add-data : bundle config.json + icons so first run seeds them
         run: >
           pyinstaller
           --onedir
@@ -41,6 +48,10 @@ jobs:
           --icon icon.ico
           --add-data "config.json;."
           --add-data "icon.ico;."
+          --add-data "icon-edit.ico;."
+          --add-data "icon-reload.ico;."
+          --add-data "icon-startup.ico;."
+          --add-data "version.txt;."
           main.py
 
       - name: Package the application folder into a zip

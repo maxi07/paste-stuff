@@ -45,8 +45,8 @@ try:
     import win32con
     import win32gui
     import win32process
-    from win32com.propsys import propsys, pscon
-    from win32com.shell import shell
+    from win32com.propsys import propsys, pscon # type: ignore[reportMissingModuleSource]
+    from win32com.shell import shell # type: ignore[reportMissingModuleSource]
 except ImportError as exc:
     _msg = (
         "Paste Stuff can't start because a required Python package is "
@@ -65,6 +65,8 @@ except ImportError as exc:
 
 APP_NAME = "Paste Stuff"
 APP_ID = "MaxKrause.PasteStuff"  # AppUserModelID that owns the taskbar button.
+AUTHOR = "Maximilian Krause"
+REPO_URL = "https://github.com/maxi07/paste-stuff"
 
 # Upper bound on how many snippets we load from config.json. Windows Jump
 # Lists can only show a limited number of entries (the exact figure is reported
@@ -92,11 +94,62 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 ICON_PATH = os.path.join(BASE_DIR, "icon.ico")
 SCRIPT = os.path.join(BASE_DIR, "main.py")
 
+# Thin, monochrome Windows 11 line icons for the fixed Jump List actions, so
+# they match the shell's own menu entries (Pin to taskbar, Close window) rather
+# than repeating the app's own icon. Each value is an (icon-file, index) pair
+# for SetIconLocation.
+ICON_EDIT = (os.path.join(BASE_DIR, "icon-edit.ico"), 0)
+ICON_RELOAD = (os.path.join(BASE_DIR, "icon-reload.ico"), 0)
+ICON_STARTUP = (os.path.join(BASE_DIR, "icon-startup.ico"), 0)
+
 if IS_FROZEN:
     LAUNCHER_EXE = sys.executable
 else:
     _PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     LAUNCHER_EXE = _PYTHONW if os.path.exists(_PYTHONW) else sys.executable
+
+
+def _app_version():
+    """Best-effort app version shown in the Jump List footer.
+
+    Frozen release: read the tag baked in by the release workflow
+    (``version.txt`` bundled next to / inside the .exe). From a source
+    checkout: ask git for the most recent tag. Falls back to ``"dev"``.
+
+    Computed lazily and cached: the short-lived ``--action`` helper processes
+    never need it, so they must not pay for a git subprocess on every launch.
+    """
+    global _version_cache
+    if _version_cache is not None:
+        return _version_cache
+    _version_cache = "dev"
+    for base in (BASE_DIR, BUNDLE_DIR):
+        try:
+            # utf-8-sig so a BOM (e.g. from a UTF-8 file written on Windows)
+            # doesn't survive into the displayed string.
+            with open(os.path.join(base, "version.txt"),
+                      encoding="utf-8-sig") as fh:
+                value = fh.read().strip()
+            if value:
+                _version_cache = value
+                return _version_cache
+        except OSError:
+            pass
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=BASE_DIR, capture_output=True, text=True, timeout=2,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        tag = out.stdout.strip()
+        if out.returncode == 0 and tag:
+            _version_cache = tag
+    except Exception:
+        pass
+    return _version_cache
+
+
+_version_cache = None
 
 
 def _relaunch_args(extra_args):
@@ -547,15 +600,22 @@ def set_autostart(enable):
 
 # --- Taskbar Jump List ------------------------------------------------------
 
-def _task_link(title, extra_args):
-    """Create a Jump List task that re-launches this script with given args."""
+def _task_link(title, extra_args, icon=None):
+    """Create a Jump List task that re-launches this script with given args.
+
+    ``icon`` is an optional (icon-file, index) pair; it defaults to the app's
+    own icon, but the fixed actions pass a stock Windows icon instead.
+    """
     link = pythoncom.CoCreateInstance(
         shell.CLSID_ShellLink, None,
         pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
     link.SetPath(LAUNCHER_EXE)
     link.SetArguments(_relaunch_args(extra_args))
     link.SetWorkingDirectory(BASE_DIR)
-    link.SetIconLocation(ICON_PATH, 0)
+    icon_path, icon_index = icon if icon else (ICON_PATH, 0)
+    if not os.path.exists(icon_path):  # fall back to the app icon if missing.
+        icon_path, icon_index = ICON_PATH, 0
+    link.SetIconLocation(icon_path, icon_index)
     link.SetDescription(title[:250])
     store = link.QueryInterface(propsys.IID_IPropertyStore)
     store.SetValue(pscon.PKEY_Title,
@@ -589,9 +649,10 @@ def build_jump_list(shortcuts):
             pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IObjectCollection)
 
         # Always keep room for the fixed app actions (separator + Edit / Reload
-        # / autostart) so a long snippet list can never push them out of the
-        # Jump List, which only has ``max_slots`` slots in total.
-        action_slots = 4
+        # / autostart + the author/version footer) so a long snippet list can
+        # never push them out of the Jump List, which only has ``max_slots``
+        # slots in total.
+        action_slots = 6
         room_for_snippets = max(0, max_slots - action_slots)
         visible = list(shortcuts.items())[:room_for_snippets]
 
@@ -601,11 +662,16 @@ def build_jump_list(shortcuts):
         if visible:
             col.AddObject(_separator_link())
 
-        col.AddObject(_task_link("Edit config", "--action edit"))
-        col.AddObject(_task_link("Reload config", "--action reload"))
+        col.AddObject(_task_link("Edit config", "--action edit", ICON_EDIT))
+        col.AddObject(_task_link("Reload config", "--action reload", ICON_RELOAD))
         startup_label = ("Disable run at startup" if is_autostart_enabled()
                          else "Enable run at startup")
-        col.AddObject(_task_link(startup_label, "--action autostart"))
+        col.AddObject(_task_link(startup_label, "--action autostart", ICON_STARTUP))
+
+        # Footer: author + version. Clicking it opens the GitHub repo.
+        col.AddObject(_separator_link())
+        col.AddObject(_task_link(
+            f"{AUTHOR}  \u2022  {_app_version()}", "--action about"))
 
         cdl.AddUserTasks(col.QueryInterface(shell.IID_IObjectArray))
         cdl.CommitList()
@@ -729,6 +795,14 @@ def run_action(action, key):
             notify_error(
                 f"Could not open config.json at:\n{CONFIG_PATH}\n\n{exc}")
         return
+    if action == "about":
+        try:
+            import webbrowser
+            webbrowser.open(REPO_URL)
+        except Exception as exc:
+            log.error("Could not open the project page: %s", exc)
+            notify_error(f"Could not open the project page:\n{REPO_URL}\n\n{exc}")
+        return
     if action == "paste":
         if send_command(f"PASTE\t{key}"):
             return
@@ -832,18 +906,20 @@ def _install_global_error_handlers():
 
 
 def _ensure_user_files():
-    """For the frozen .exe, seed editable assets next to it on first run.
+    """For the frozen .exe, seed bundled assets next to it on first run.
 
-    A single-file PyInstaller .exe unpacks its bundled copies of config.json
-    and icon.ico into a temporary folder that is deleted on exit, so they can't
-    be edited or referenced persistently (e.g. by the Jump List). On first run
-    we copy them next to the .exe -- where ``CONFIG_PATH``/``ICON_PATH`` point --
-    giving the user a working, editable config.json out of the box.
+    A single-file PyInstaller .exe unpacks its bundled assets into a temporary
+    folder that is deleted on exit, so they can't be edited or referenced
+    persistently (e.g. by the Jump List, whose icons point at fixed paths). On
+    first run we copy them next to the .exe -- where ``CONFIG_PATH``,
+    ``ICON_PATH`` and the action-icon paths point -- giving the user a working,
+    editable config.json and the menu icons out of the box.
     """
     if not IS_FROZEN:
         return
     import shutil
-    for name in ("config.json", "icon.ico"):
+    for name in ("config.json", "icon.ico", "icon-edit.ico",
+                 "icon-reload.ico", "icon-startup.ico"):
         dest = os.path.join(EXE_DIR, name)
         if os.path.exists(dest):
             continue
@@ -862,7 +938,7 @@ def main():
     _ensure_user_files()
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--action", choices=[
-        "paste", "reload", "autostart", "edit", "quit"])
+        "paste", "reload", "autostart", "edit", "quit", "about"])
     parser.add_argument("--key", default="")
     args, _ = parser.parse_known_args()
 
